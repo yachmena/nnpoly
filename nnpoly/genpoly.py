@@ -19,6 +19,28 @@ def legendre_monic(N: int, deg: int = 100):
     return x, w, leg, a, b
 
 
+def fejer_quadrature(deg: int, left: float, right: float):
+    scheme = quadpy.c1.fejer_1(deg)
+    x = scheme.points
+    w = scheme.weights
+    if np.isinf(left) and np.isinf(right):
+        # from [-1, 1] to [-inf, inf]
+        x = None 
+        w = w * None
+    elif np.isinf(right):
+        # from [-1, 1] to [0, inf]
+        x = None 
+        w = w * None
+    elif np.isinf(left):
+        # from [-1, 1] to [-inf, 0]
+        x = None
+        w = w * None
+    else:
+        x = 0.5 * ((right - left) * x + right + left)
+        w = w * 0.5 * (right - left)
+    return x, w
+
+
 @jax.jit
 def modified_chebyshev(w, poly, a, b, wf):
 
@@ -99,17 +121,8 @@ def test_modified_chebyshev(weight_func: Callable, N: int):
     return points, weights, alpha, beta
 
 
-def fejer_lanczos(N: int, left: float, right: float, nquad: int, wf: Callable):
-    scheme = quadpy.c1.fejer_1(nquad)
-    x = scheme.points
-    w = scheme.weights
-    x = 0.5 * ((right - left) * x + right + left)
-    w = w * wf(x) * 0.5 * (right - left)
-    alpha, beta = lancz(N+1, x, w)
-    return x, w, alpha, beta
-
-
-def lancz(n, x, w):
+@jax.jit
+def lanczos(N: int, x, w):
     alpha = jnp.array(x)
     beta = jnp.zeros_like(alpha)
     beta = beta.at[0].set(w[0])
@@ -123,22 +136,25 @@ def lancz(n, x, w):
             drho = beta[k] + dpi
             dtmp = dgam * drho
             dtsig = dsig
-            if drho <= 0.0:
-                dgam = 1.0
-                dsig = 0.0
-            else:
-                dgam = beta[k] / drho
-                dsig = dpi / drho
+            dgam = jax.lax.cond(drho<=0.0, lambda a,b: 1.0, lambda a,b: a/b, beta[k], drho)
+            dsig = jax.lax.cond(drho<=0.0, lambda a,b: 0.0, lambda a,b: a/b, dpi, drho)
+            # if drho <= 0.0:
+            #     dgam = 1.0
+            #     dsig = 0.0
+            # else:
+            #     dgam = beta[k] / drho
+            #     dsig = dpi / drho
             dtk = dsig * (alpha[k] - xlam) - dgam * dt
             alpha = alpha.at[k].set(alpha[k] - (dtk - dt))
             dt = dtk
-            if dsig <= 0:
-                dpi = dtsig * beta[k]
-            else:
-                dpi = dt**2 / dsig
+            dpi = jax.lax.cond(dsig<=0.0, lambda a,b,c,d: a*b, lambda a,b,c,d: c**2/d, dtsig, beta[k], dt, dsig)
+            # if dsig <= 0:
+            #     dpi = dtsig * beta[k]
+            # else:
+            #     dpi = dt**2 / dsig
             dtsig = dsig
             beta = beta.at[k].set(dtmp)
-    return alpha[:n], beta[:n]
+    return alpha[:N+1], beta[:N+1]
 
 
 if __name__ == "__main__":
@@ -152,7 +168,10 @@ if __name__ == "__main__":
     left = 0.001
     right = 10
     nquad = 60
-    points, weights, alpha, beta = fejer_lanczos(N, left, right, nquad, weight_func)
+    points, weights = fejer_quadrature(nquad, left, right)
+    wf = weight_func(points)
+    weights = weights * wf
+    alpha, beta = lanczos(N, points, weights)
 
     # Method 2, starting from moment integrals
     # x, w, leg, a, b = legendre_monic(N)
