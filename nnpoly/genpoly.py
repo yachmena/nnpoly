@@ -5,6 +5,7 @@ from typing import Callable
 from jax.config import config; config.update("jax_enable_x64", True)
 import jax
 from jax import numpy as jnp
+from functools import partial
 
 
 def legendre_monic(N: int, deg: int = 100):
@@ -88,17 +89,6 @@ def modified_chebyshev(w, poly, a, b, wf):
     return points, weights, alpha, beta
 
 
-@jax.jit
-def polynom(x, alpha, beta):
-    p = jnp.zeros((len(alpha), len(x)), dtype=np.float64)
-    p = p.at[0].set(1)
-    p = p.at[1].set(x - alpha[0])
-    for k in range(2, len(alpha)):
-        p = p.at[k].set((x - alpha[k-1]) * p[k-1] - beta[k-1] * p[k-2])
-    norm = jnp.array([1.0 / jnp.sqrt(jnp.prod(beta[:n+1])) for n in range(len(beta))])
-    return p * norm[:, None]
-
-
 def test_modified_chebyshev(weight_func: Callable, N: int):
 
     scheme = quadpy.c1.gauss_legendre(100)
@@ -121,7 +111,7 @@ def test_modified_chebyshev(weight_func: Callable, N: int):
     return points, weights, alpha, beta
 
 
-@jax.jit
+@partial(jax.jit, static_argnums=(0,))
 def lanczos(N: int, x, w):
     alpha = jnp.array(x)
     beta = jnp.zeros_like(alpha)
@@ -136,8 +126,14 @@ def lanczos(N: int, x, w):
             drho = beta[k] + dpi
             dtmp = dgam * drho
             dtsig = dsig
-            dgam = jax.lax.cond(drho<=0.0, lambda a,b: 1.0, lambda a,b: a/b, beta[k], drho)
-            dsig = jax.lax.cond(drho<=0.0, lambda a,b: 0.0, lambda a,b: a/b, dpi, drho)
+            dgam = jax.lax.cond(drho<=0.0,
+                                lambda a,b: 1.0,
+                                lambda a,b: a/b,
+                                beta[k], drho)
+            dsig = jax.lax.cond(drho<=0.0,
+                                lambda a,b: 0.0,
+                                lambda a,b: a/b,
+                                dpi, drho)
             # if drho <= 0.0:
             #     dgam = 1.0
             #     dsig = 0.0
@@ -147,7 +143,10 @@ def lanczos(N: int, x, w):
             dtk = dsig * (alpha[k] - xlam) - dgam * dt
             alpha = alpha.at[k].set(alpha[k] - (dtk - dt))
             dt = dtk
-            dpi = jax.lax.cond(dsig<=0.0, lambda a,b,c,d: a*b, lambda a,b,c,d: c**2/d, dtsig, beta[k], dt, dsig)
+            dpi = jax.lax.cond(dsig<=0.0,
+                               lambda a,b,c,d: a*b,
+                               lambda a,b,c,d: c**2/d,
+                               dtsig, beta[k], dt, dsig)
             # if dsig <= 0:
             #     dpi = dtsig * beta[k]
             # else:
@@ -157,9 +156,19 @@ def lanczos(N: int, x, w):
     return alpha[:N+1], beta[:N+1]
 
 
+@jax.jit
+def polynom(x, alpha, beta):
+    p = jnp.zeros((len(alpha), len(x)), dtype=np.float64)
+    p = p.at[0].set(1)
+    p = p.at[1].set(x - alpha[0])
+    for k in range(2, len(alpha)):
+        p = p.at[k].set((x - alpha[k-1]) * p[k-1] - beta[k-1] * p[k-2])
+    norm = jnp.array([1.0 / jnp.sqrt(jnp.prod(beta[:n+1])) for n in range(len(beta))])
+    return p * norm[:, None]
+
+
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
-    import sys
 
     weight_func = lambda x: jnp.exp(-x**2)
     N = 20
@@ -167,10 +176,10 @@ if __name__ == "__main__":
     # Method 1, starting from quadrature
     left = 0.001
     right = 10
-    nquad = 60
-    points, weights = fejer_quadrature(nquad, left, right)
+    nquad = 30
+    points, w = fejer_quadrature(nquad, left, right)
     wf = weight_func(points)
-    weights = weights * wf
+    weights = w * wf
     alpha, beta = lanczos(N, points, weights)
 
     # Method 2, starting from moment integrals
