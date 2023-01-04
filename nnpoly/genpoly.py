@@ -160,24 +160,38 @@ def lanczos(N: int, x, w):
 
 @jax.jit
 def polynom(x, alpha, beta):
+
+    def f_pol(p, k):
+        p = p.at[k].set((x - alpha[k-1]) * p[k-1] - beta[k-1] * p[k-2])
+        return p, 0
+
+    def f_norm(norm, k):
+        n = norm[k-1] / jnp.sqrt(beta[k])
+        norm = norm.at[k].set(n)
+        return norm, n
+
     p = jnp.zeros((len(alpha), len(x)), dtype=np.float64)
     p = p.at[0].set(1)
     p = p.at[1].set(x - alpha[0])
-    for k in range(2, len(alpha)):
-        p = p.at[k].set((x - alpha[k-1]) * p[k-1] - beta[k-1] * p[k-2])
-    norm = jnp.array([1.0 / jnp.sqrt(jnp.prod(beta[:n+1])) for n in range(len(beta))])
+    p, _ = jax.lax.scan(f_pol, p, np.arange(2, len(alpha)))
+
+    norm = jnp.zeros(len(beta), dtype=np.float64)
+    norm = norm.at[0].set(1.0 / jnp.sqrt(beta[0]))
+    norm, _ = jax.lax.scan(f_norm, norm, np.arange(1, len(beta)))
+
     return p * norm[:, None]
+
 
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    weight_func = lambda x: jnp.exp(-x)
+    weight_func = lambda x: jnp.exp(-x**2)
     N = 20
 
     # Method 1, starting from quadrature
-    left = 0
-    right = 100
+    left = -10
+    right = 10
     nquad = 100
     points, w = fejer_quadrature(nquad, left, right)
     wf = weight_func(points)
