@@ -99,27 +99,82 @@ def test_modified_chebyshev(weight_func: Callable, N: int):
     return points, weights, alpha, beta
 
 
+def fejer_lanczos(N: int, left: float, right: float, nquad: int, wf: Callable):
+    scheme = quadpy.c1.fejer_1(nquad)
+    x = scheme.points
+    w = scheme.weights
+    x = 0.5 * ((right - left) * x + right + left)
+    w = w * wf(x) * 0.5 * (right - left)
+    alpha, beta = lancz(N+1, x, w)
+    return x, w, alpha, beta
+
+
+def lancz(n, x, w):
+    alpha = jnp.array(x)
+    beta = jnp.zeros_like(alpha)
+    beta = beta.at[0].set(w[0])
+    for i in range(len(x)-1):
+        dpi = w[i+1]
+        dgam = 1.0
+        dsig = 0.0
+        dt = 0.0
+        xlam = x[i+1]
+        for k in range(i+2):
+            drho = beta[k] + dpi
+            dtmp = dgam * drho
+            dtsig = dsig
+            if drho <= 0.0:
+                dgam = 1.0
+                dsig = 0.0
+            else:
+                dgam = beta[k] / drho
+                dsig = dpi / drho
+            dtk = dsig * (alpha[k] - xlam) - dgam * dt
+            alpha = alpha.at[k].set(alpha[k] - (dtk - dt))
+            dt = dtk
+            if dsig <= 0:
+                dpi = dtsig * beta[k]
+            else:
+                dpi = dt**2 / dsig
+            dtsig = dsig
+            beta = beta.at[k].set(dtmp)
+    return alpha[:n], beta[:n]
+
 
 if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+    import sys
 
-    weight_func = lambda x: x * x
+    weight_func = lambda x: jnp.exp(-x**2)
     N = 20
-    x, w, leg, a, b = legendre_monic(N)
-    wf = weight_func(x)
 
-    points, weights, alpha, beta = modified_chebyshev(w, leg, a, b, wf)
+    # Method 1, starting from quadrature
+    left = 0.001
+    right = 10
+    nquad = 60
+    points, weights, alpha, beta = fejer_lanczos(N, left, right, nquad, weight_func)
 
-    points2, weights2, alpha2, beta2 = test_modified_chebyshev(weight_func, N)
+    # Method 2, starting from moment integrals
+    # x, w, leg, a, b = legendre_monic(N)
+    # wf = weight_func(x)
+    # points, weights, alpha, beta = modified_chebyshev(w, leg, a, b, wf)
 
-    print(np.array(alpha)-alpha2)
-    print(np.array(beta)-beta2)
-    print(np.array(points)-points2)
-    print(np.array(weights)-weights2)
+    # points2, weights2, alpha2, beta2 = test_modified_chebyshev(weight_func, N)
+    # print(np.array(alpha)-alpha2)
+    # print(np.array(beta)-beta2)
+    # print(np.array(points)-points2)
+    # print(np.array(weights)-weights2)
 
+    # overlap integrals
     p = polynom(points, alpha, beta)
     ovlp = jnp.einsum('ig,jg,g->ij', p, p, weights)
     print("overlap")
     ovlp_off = ovlp - np.diag(np.diag(ovlp))
     for i in range(len(ovlp)):
         print("i = ", i, "max offdiag = ", np.max(np.abs(ovlp_off[i])), "diag = ", ovlp[i, i])
+
+    # plot
+    for pp in p[:5]:
+        plt.plot(points, pp*np.sqrt(weights))
+    plt.show()
 
