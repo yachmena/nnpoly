@@ -111,8 +111,37 @@ def test_modified_chebyshev(weight_func: Callable, N: int):
     return points, weights, alpha, beta
 
 
-# @partial(jax.jit, static_argnums=(0,))
+@partial(jax.jit, static_argnums=(0,))
 def lanczos(N: int, x, w):
+
+    assert (N > 0), f"polynomial order N <= 0: {N} <= 0"
+    assert (N <= len(x)), f"polynomial order N > quadrature deg: {N} > {len(x)}"
+
+    def inner_loop(carry, k):
+        alpha, beta, dpi, dgam, dsig, dt, xlam = carry
+        drho = beta[k] + dpi
+        dtmp = dgam * drho
+        dtsig = dsig
+        dgam = jax.lax.cond(drho<=0.0,
+                            lambda a,b: 1.0,
+                            lambda a,b: a/b,
+                            beta[k], drho)
+        dsig = jax.lax.cond(drho<=0.0,
+                            lambda a,b: 0.0,
+                            lambda a,b: a/b,
+                            dpi, drho)
+        dtk = dsig * (alpha[k] - xlam) - dgam * dt
+        alpha = alpha.at[k].set(alpha[k] - (dtk - dt))
+        dt = dtk
+        dpi = jax.lax.cond(dsig<=0.0,
+                           lambda a,b,c,d: a*b,
+                           lambda a,b,c,d: c**2/d,
+                           dtsig, beta[k], dt, dsig)
+        dtsig = dsig
+        beta = beta.at[k].set(dtmp)
+        carry = (alpha, beta, dpi, dgam, dsig, dt, xlam)
+        return carry, 0
+
     alpha = jnp.array(x)
     beta = jnp.zeros_like(alpha)
     beta = beta.at[0].set(w[0])
@@ -122,37 +151,10 @@ def lanczos(N: int, x, w):
         dsig = 0.0
         dt = 0.0
         xlam = x[i+1]
-        for k in range(i+2):
-            drho = beta[k] + dpi
-            dtmp = dgam * drho
-            dtsig = dsig
-            dgam = jax.lax.cond(drho<=0.0,
-                                lambda a,b: 1.0,
-                                lambda a,b: a/b,
-                                beta[k], drho)
-            dsig = jax.lax.cond(drho<=0.0,
-                                lambda a,b: 0.0,
-                                lambda a,b: a/b,
-                                dpi, drho)
-            # if drho <= 0.0:
-            #     dgam = 1.0
-            #     dsig = 0.0
-            # else:
-            #     dgam = beta[k] / drho
-            #     dsig = dpi / drho
-            dtk = dsig * (alpha[k] - xlam) - dgam * dt
-            alpha = alpha.at[k].set(alpha[k] - (dtk - dt))
-            dt = dtk
-            dpi = jax.lax.cond(dsig<=0.0,
-                               lambda a,b,c,d: a*b,
-                               lambda a,b,c,d: c**2/d,
-                               dtsig, beta[k], dt, dsig)
-            # if dsig <= 0:
-            #     dpi = dtsig * beta[k]
-            # else:
-            #     dpi = dt**2 / dsig
-            dtsig = dsig
-            beta = beta.at[k].set(dtmp)
+        carry = (alpha, beta, dpi, dgam, dsig, dt, xlam)
+        carry, _ = jax.lax.scan(inner_loop, carry, np.arange(i+2))
+        alpha, beta, dpi, dgam, dsig, dt, xlam = carry
+
     return alpha[:N+1], beta[:N+1]
 
 
@@ -170,12 +172,12 @@ def polynom(x, alpha, beta):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    weight_func = lambda x: jnp.exp(-x**2)
+    weight_func = lambda x: jnp.exp(-x)
     N = 20
 
     # Method 1, starting from quadrature
-    left = -np.inf
-    right = np.inf
+    left = 0
+    right = 100
     nquad = 100
     points, w = fejer_quadrature(nquad, left, right)
     wf = weight_func(points)
@@ -202,7 +204,7 @@ if __name__ == "__main__":
         print("i = ", i, "max offdiag = ", np.max(np.abs(ovlp_off[i])), "diag = ", ovlp[i, i])
 
     # plot
-    for pp in p[:5]:
+    for pp in p[:6]:
         plt.plot(points, pp*np.sqrt(weights))
     plt.show()
 
