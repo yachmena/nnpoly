@@ -26,16 +26,16 @@ def fejer_quadrature(deg: int, left: float, right: float):
     w = scheme.weights
     if np.isinf(left) and np.isinf(right):
         # from [-1, 1] to [-inf, inf]
-        x = None 
-        w = w * None
+        x = x / (1.0 - x**2)
+        w = w * (x**2 + 1.0) / (1.0 - x**2)**2
     elif np.isinf(right):
         # from [-1, 1] to [0, inf]
-        x = None 
-        w = w * None
+        x = left + (1.0 + x) / (1.0 - x)
+        w = w * 2.0 / (1.0 - x)**2
     elif np.isinf(left):
         # from [-1, 1] to [-inf, 0]
-        x = None
-        w = w * None
+        x = right - (1.0 - x) / (1.0 + x)
+        w = w * 2.0 / (1.0 + x)**2
     else:
         x = 0.5 * ((right - left) * x + right + left)
         w = w * 0.5 * (right - left)
@@ -111,7 +111,7 @@ def test_modified_chebyshev(weight_func: Callable, N: int):
     return points, weights, alpha, beta
 
 
-@partial(jax.jit, static_argnums=(0,))
+# @partial(jax.jit, static_argnums=(0,))
 def lanczos(N: int, x, w):
     alpha = jnp.array(x)
     beta = jnp.zeros_like(alpha)
@@ -174,9 +174,9 @@ if __name__ == "__main__":
     N = 20
 
     # Method 1, starting from quadrature
-    left = 0.001
-    right = 10
-    nquad = 30
+    left = -np.inf
+    right = np.inf
+    nquad = 100
     points, w = fejer_quadrature(nquad, left, right)
     wf = weight_func(points)
     weights = w * wf
