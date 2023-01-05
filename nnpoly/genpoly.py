@@ -170,7 +170,8 @@ def polynom(x, alpha, beta):
         norm = norm.at[k].set(n)
         return norm, n
 
-    p = jnp.zeros((len(alpha), len(x)), dtype=np.float64)
+    # p = jnp.zeros((len(alpha), len(x)), dtype=np.float64)
+    p = jnp.zeros(len(alpha), dtype=np.float64)
     p = p.at[0].set(1)
     p = p.at[1].set(x - alpha[0])
     p, _ = jax.lax.scan(f_pol, p, np.arange(2, len(alpha)))
@@ -179,14 +180,23 @@ def polynom(x, alpha, beta):
     norm = norm.at[0].set(1.0 / jnp.sqrt(beta[0]))
     norm, _ = jax.lax.scan(f_norm, norm, np.arange(1, len(beta)))
 
-    return p * norm[:, None]
+    return p * norm
 
+
+batch_polynom = jax.jit(jax.vmap(polynom, in_axes=(0, None, None)))
+
+
+@jax.jit
+def dpolynom(x_batch, alpha, beta):
+    def deriv(x):
+        return jax.jacrev(polynom, 0)(x, alpha, beta)
+    return jax.vmap(deriv, in_axes=0)(x_batch)
 
 
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    weight_func = lambda x: jnp.exp(-x**2)
+    weight_func = lambda x: x*x *jnp.exp(-x**2)
     N = 20
 
     # Method 1, starting from quadrature
@@ -210,15 +220,19 @@ if __name__ == "__main__":
     # print(np.array(weights)-weights2)
 
     # overlap integrals
-    p = polynom(points, alpha, beta)
-    ovlp = jnp.einsum('ig,jg,g->ij', p, p, weights)
+    p = batch_polynom(points, alpha, beta)
+    ovlp = jnp.einsum('gi,gj,g->ij', p, p, weights)
     print("overlap")
     ovlp_off = ovlp - np.diag(np.diag(ovlp))
     for i in range(len(ovlp)):
         print("i = ", i, "max offdiag = ", np.max(np.abs(ovlp_off[i])), "diag = ", ovlp[i, i])
 
+    dp = dpolynom(points, alpha, beta)
+    print(dp.shape)
     # plot
-    for pp in p[:6]:
+    for pp in p.T[:6]:
         plt.plot(points, pp*np.sqrt(weights))
+    for pp in dp.T[:6]:
+        plt.plot(points, pp*np.sqrt(weights), '--')
     plt.show()
 
