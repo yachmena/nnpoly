@@ -200,24 +200,24 @@ if __name__ == "__main__":
     N = 20
 
     # Method 1, starting from quadrature
-    left = -10
-    right = 10
-    nquad = 100
-    points, w = fejer_quadrature(nquad, left, right)
-    wf = weight_func(points)
-    weights = w * wf
-    alpha, beta = lanczos(N, points, weights)
+    # left = -10
+    # right = 10
+    # nquad = 100
+    # points, w = fejer_quadrature(nquad, left, right)
+    # wf = weight_func(points)
+    # weights = w * wf
+    # alpha, beta = lanczos(N, points, weights)
 
     # Method 2, starting from moment integrals
-    # x, w, leg, a, b = legendre_monic(N)
-    # wf = weight_func(x)
-    # points, weights, alpha, beta = modified_chebyshev(w, leg, a, b, wf)
+    x, w, leg, a, b = legendre_monic(N)
+    wf = weight_func(x)
+    points, weights, alpha, beta = modified_chebyshev(w, leg, a, b, wf)
 
-    # points2, weights2, alpha2, beta2 = test_modified_chebyshev(weight_func, N)
-    # print(np.array(alpha)-alpha2)
-    # print(np.array(beta)-beta2)
-    # print(np.array(points)-points2)
-    # print(np.array(weights)-weights2)
+    points2, weights2, alpha2, beta2 = test_modified_chebyshev(weight_func, N)
+    print(np.array(alpha)-alpha2)
+    print(np.array(beta)-beta2)
+    print(np.array(points)-points2)
+    print(np.array(weights)-weights2)
 
     # overlap integrals
     p = batch_polynom(points, alpha, beta)
