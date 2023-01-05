@@ -15,19 +15,21 @@ class Dense(nn.Module):
     sizes: List[int]
     @nn.compact
     def __call__(self, x):
-        w0 = jnp.exp(-x**2)
+        # w0 = jnp.exp(-x**2)
         size_ = x.shape[-1]
         for i, size in enumerate(self.sizes):
-            # kernel = self.param(f"w_{i}", jax.nn.initializers.glorot_uniform(), (size_, size))
-            kernel = self.param(f"w_{i}", jax.nn.initializers.zeros, (size_, size))
+            kernel = self.param(f"w_{i}", jax.nn.initializers.glorot_uniform(), (size_, size))
             bias = self.param(f"b_{i}", jax.nn.initializers.zeros, (size,))
-            x = jax.nn.sigmoid(jnp.dot(x, kernel) + bias)
+            x = jax.nn.relu(jnp.dot(x, kernel) + bias)
+            # if i == len(self.sizes) - 1:
+            #     x = (1 + x) * w0
             size_ = size
-        return x * w0
+        return jnp.exp(-x)
+        # return x
 
 
-def harmonic_potential(x, k: float = 1.0):
-    return 0.5 * k * x**2
+def potential(x, k2: float = 0.5, k4: float = 0.):
+    return k2 * x**2 + k4 * x**4
 
 
 def jac_x(model, params, x_batch):
@@ -56,38 +58,94 @@ def solve_hermite(potential: Callable, nbas: int, nquad: int = 80):
     return e
 
 
-def solve_custom_poly(potential: Callable, nbas: int, left: float, right: float, nquad=100):
+def solve_custom_poly(poten: Callable, nbas: int, left: float, right: float, nquad=100):
+
+    @jax.jit
+    def hamiltonian(params):
+        weights = model.apply(params, points) * w[:, None]
+        alpha, beta = lanczos(nbas, points[:, 0], weights[:, 0])
+
+        pol = batch_polynom(points[:, 0], alpha, beta)
+        dpol = dpolynom(points[:, 0], alpha, beta)
+
+        sqw = jnp.sqrt(weights[:, 0])
+        deriv_weights = jac_x(model, params, points) * w[:, None, None]
+        dw = deriv_weights[:, 0, 0]
+
+        psi = pol * sqw[:, None]
+        dpsi = dpol * sqw[:, None] + 0.5 * pol / sqw[:, None] * dw[:, None]
+
+        keo = 0.5 * jnp.einsum('gi,gj->ij', dpsi, dpsi, optimize='optimal')
+        pot = jnp.einsum('gi,gj,g->ij', psi, psi, poten(points[:,0]), optimize='optimal')
+        return keo + pot
+
+    @jax.jit
+    def loss_fn(params):
+        def trace(params):
+            h = hamiltonian(params)
+            return jnp.diag(h)
+        return jnp.sum(trace(params)) 
+
 
     points, w = fejer_quadrature(nquad, left, right)
     points = np.array([points]).T
 
     model = Dense(sizes=[64, 64, 64, 1])
     params = model.init(jax.random.PRNGKey(0), points)
-    weights = model.apply(params, points) * w[:, None]
-    alpha, beta = lanczos(nbas, points[:, 0], weights[:, 0])
-    deriv_weights = jac_x(model, params, points) * w[:, None, None]
 
-    pol = batch_polynom(points[:, 0], alpha, beta)
-    dpol = dpolynom(points[:, 0], alpha, beta)
-
-    sqw = jnp.sqrt(weights[:, 0])
-    dw = deriv_weights[:, 0, 0]
-    psi = pol * sqw[:, None]
-    dpsi = dpol * sqw[:, None] + 0.5 * pol / sqw[:, None] * dw[:, None]
-    ovlp = jnp.einsum('gi,gj->ij', psi, psi, optimize='optimal')
-
-    keo = 0.5 * jnp.einsum('gi,gj->ij', dpsi, dpsi, optimize='optimal')
-    pot = jnp.einsum('gi,gj,g->ij', psi, psi, potential(points[:,0]), optimize='optimal')
-    ham = keo + pot
-    e, _ = jnp.linalg.eigh(ham)
+    h = hamiltonian(params)
+    e, _ = jnp.linalg.eigh(h)
     print(e)
+    # sys.exit()
+
+    optx = optax.adam(learning_rate=0.001)
+    opt_state = optx.init(params)
+    loss_grad_fn = jax.value_and_grad(loss_fn)
+
+    for i in range(10000):
+        loss_val, grad = loss_grad_fn(params)
+        updates, opt_state = optx.update(grad, opt_state)
+        params = optax.apply_updates(params, updates)
+
+        h = hamiltonian(jax.lax.stop_gradient(params))
+        e, _ = np.linalg.eigh(h)
+        print(i, loss_val, e)
+
+    # weights = model.apply(params, points) * w[:, None]
+    # alpha, beta = lanczos(nbas, points[:, 0], weights[:, 0])
+    # deriv_weights = jac_x(model, params, points) * w[:, None, None]
+    # pol = batch_polynom(points[:, 0], alpha, beta)
+    # dpol = dpolynom(points[:, 0], alpha, beta)
+    # sqw = jnp.sqrt(weights[:, 0])
+    # dw = deriv_weights[:, 0, 0]
+    # psi = pol * sqw[:, None]
+    # dpsi = dpol * sqw[:, None] + 0.5 * pol / sqw[:, None] * dw[:, None]
+    # ovlp = jnp.einsum('gi,gj->ij', psi, psi, optimize='optimal')
+    # keo = 0.5 * jnp.einsum('gi,gj->ij', dpsi, dpsi, optimize='optimal')
+    # pot = jnp.einsum('gi,gj,g->ij', psi, psi, potential(points[:,0]), optimize='optimal')
+    # ham = keo + pot
+    # e, _ = jnp.linalg.eigh(ham)
+    # print(e)
 
 
 if __name__ == "__main__":
+    import matplotlib.pyplot as plt
 
-    potential = partial(harmonic_potential, k=1.0)
+    poten = partial(potential, k4=1.0)
     nbas = 10
-    left = -10.0
-    right = 10.0
-    solve_custom_poly(potential, nbas, left, right, nquad=200)
-    # solve_hermite(potential, nbas)
+    left = -3
+    right = 3
+    solve_custom_poly(poten, nbas, left, right, nquad=100)
+
+    # e0 = solve_hermite(poten, 60)
+    # x = np.linspace(left, right, 100)
+    # plt.plot(x, poten(x))
+    # for e in e0[:10]:
+    #     plt.plot(x, [e]*len(x))
+    #
+    # print(e0[:10])
+    # for nbas in [10, 20, 30, 40, 50]:
+    #     e = solve_hermite(poten, nbas)
+    #     print(nbas, e[:10] - e0[:10])
+    #
+    # plt.show()
