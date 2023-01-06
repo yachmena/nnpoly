@@ -45,6 +45,21 @@ def fejer_quadrature(deg: int, left: float, right: float):
 @jax.jit
 def modified_chebyshev(w, poly, a, b, wf):
 
+    def rec_1(carry, l):
+        il, sigma = carry
+        sigma = sigma.at[il].set(
+            nu[l+1] - (alpha[0] - a[l]) * nu[l] + b[l] * nu[l-1]
+        )
+        return (il+1, sigma), 0
+
+    def rec_k(carry, l):
+        il, sigma = carry
+        sigma = sigma.at[il].set(
+            sigma_k_min_1[il+2] - (alpha[k-1] - a[l]) * sigma_k_min_1[il+1] \
+            - beta[k-1] * sigma_k_min_2[il+2] + b[l] * sigma_k_min_1[il]
+        )
+        return (il+1, sigma), 0
+
     # modified moments nu[k], k = 0..2n-1
     nu = jnp.sum(poly * w * wf, axis=-1)
 
@@ -58,8 +73,9 @@ def modified_chebyshev(w, poly, a, b, wf):
     sigma_k_min_1 = nu
 
     k = 1
-    sigma_k = jnp.array([nu[l+1] - (alpha[0] - a[l]) * nu[l] + b[l] * nu[l-1]
-                for l in range(k, 2 * N - k)])
+    (_, sigma_k), _ = jax.lax.scan(rec_1, (0, jnp.zeros(len(np.arange(k, 2*N-k)))), np.arange(k, 2*N-k))
+    # sigma_k = jnp.array([nu[l+1] - (alpha[0] - a[l]) * nu[l] + b[l] * nu[l-1]
+    #             for l in range(k, 2 * N - k)])
     alpha = alpha.at[k].set(
         a[k] + sigma_k[1] / sigma_k[0] - sigma_k_min_1[1] / sigma_k_min_1[0]
     )
@@ -70,9 +86,10 @@ def modified_chebyshev(w, poly, a, b, wf):
     for k in range(2, N):
         sigma_k_min_2 = sigma_k_min_1
         sigma_k_min_1 = sigma_k
-        sigma_k = jnp.array([sigma_k_min_1[il+2] - (alpha[k-1] - a[l]) * sigma_k_min_1[il+1] \
-                                - beta[k-1] * sigma_k_min_2[il+2] + b[l] * sigma_k_min_1[il]
-                                for il, l in  enumerate(range(k, 2 * N - k))])
+        (_, sigma_k), _ = jax.lax.scan(rec_k, (0, jnp.zeros(len(np.arange(k, 2*N-k)))), np.arange(k, 2*N-k))
+        # sigma_k = jnp.array([sigma_k_min_1[il+2] - (alpha[k-1] - a[l]) * sigma_k_min_1[il+1] \
+        #                         - beta[k-1] * sigma_k_min_2[il+2] + b[l] * sigma_k_min_1[il]
+        #                         for il, l in  enumerate(range(k, 2 * N - k))])
         alpha = alpha.at[k].set(
             a[k] + sigma_k[1] / sigma_k[0] - sigma_k_min_1[1] / sigma_k_min_1[0]
         )
@@ -196,8 +213,8 @@ def dpolynom(x_batch, alpha, beta):
 if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
-    weight_func = lambda x: x*x *jnp.exp(-x**2)
-    N = 20
+    weight_func = lambda x: x*x #*jnp.exp(-x**2)
+    N = 60
 
     # Method 1, starting from quadrature
     # left = -10
