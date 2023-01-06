@@ -42,8 +42,8 @@ def fejer_quadrature(deg: int, left: float, right: float):
     return x, w
 
 
-@jax.jit
-def modified_chebyshev(w, poly, a, b, wf):
+@partial(jax.jit, static_argnums=(0,))
+def modified_chebyshev(N, w, poly, a, b, wf):
 
     def rec_1(carry, l):
         il, sigma = carry
@@ -228,7 +228,7 @@ if __name__ == "__main__":
     # Method 2, starting from moment integrals
     x, w, leg, a, b = legendre_monic(N)
     wf = weight_func(x)
-    points, weights, alpha, beta = modified_chebyshev(w, leg, a, b, wf)
+    points, weights, alpha, beta = modified_chebyshev(N, w, leg, a, b, wf)
 
     points2, weights2, alpha2, beta2 = test_modified_chebyshev(weight_func, N)
     print(np.array(alpha)-alpha2)
