@@ -211,6 +211,7 @@ def dpolynom(x_batch, alpha, beta):
 
 
 if __name__ == "__main__":
+    import sys
     import matplotlib.pyplot as plt
 
     weight_func = lambda x: x*x #*jnp.exp(-x**2)
