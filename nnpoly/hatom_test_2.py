@@ -136,7 +136,7 @@ def solve_lanczos(poten: Callable, nbas: int, quanta, left: float, right: float,
     weights = np.array([elem for elem in itertools.product(wx, wy, wz)])
     wx_, wy_, wz_ = weights.T
 
-    sizes = [32, 32, 32, 32, 1]
+    sizes = [128, 128, 128, 128, 1]
     model = Dense3D(sizes_x=sizes, sizes_y=sizes, sizes_z=sizes)
     params = model.init(jax.random.PRNGKey(0), xyz)
 
@@ -147,7 +147,7 @@ def solve_lanczos(poten: Callable, nbas: int, quanta, left: float, right: float,
 
     optx = optax.adam(learning_rate=0.001)
     opt_state = optx.init(params)
-    loss_grad_fn = jax.value_and_grad(loss_enr)
+    loss_grad_fn = jax.value_and_grad(loss_trace)
     
     for i in range(1000):
         loss_val, grad = loss_grad_fn(params)
@@ -163,8 +163,8 @@ if __name__ == "__main__":
 
     poten = potential
     nbas = 3
-    left = -8.0
-    right = 8.0
+    left = -20.0
+    right = 20.0
 
     quanta = np.array([elem for elem in itertools.product(*[np.arange(nbas)]*3) if sum(elem) <= nbas])
     solve_lanczos(poten, nbas, quanta, left, right, nquad=60, nstates=5)

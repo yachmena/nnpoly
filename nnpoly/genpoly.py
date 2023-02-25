@@ -176,7 +176,7 @@ def lanczos(N: int, x, w):
 
 
 @jax.jit
-def polynom(x, alpha, beta):
+def polval(x, alpha, beta):
 
     def f_pol(p, k):
         p = p.at[k].set((x - alpha[k-1]) * p[k-1] - beta[k-1] * p[k-2])
@@ -200,18 +200,17 @@ def polynom(x, alpha, beta):
     return p * norm
 
 
-batch_polynom = jax.jit(jax.vmap(polynom, in_axes=(0, None, None)))
+batch_polval = jax.jit(jax.vmap(polval, in_axes=(0, None, None)))
 
 
 @jax.jit
-def dpolynom(x_batch, alpha, beta):
+def polder(x_batch, alpha, beta):
     def deriv(x):
-        return jax.jacrev(polynom, 0)(x, alpha, beta)
+        return jax.jacrev(polval, 0)(x, alpha, beta)
     return jax.vmap(deriv, in_axes=0)(x_batch)
 
 
 if __name__ == "__main__":
-    import sys
     import matplotlib.pyplot as plt
 
     weight_func = lambda x: x*x #*jnp.exp(-x**2)
@@ -238,14 +237,14 @@ if __name__ == "__main__":
     print(np.array(weights)-weights2)
 
     # overlap integrals
-    p = batch_polynom(points, alpha, beta)
+    p = batch_polval(points, alpha, beta)
     ovlp = jnp.einsum('gi,gj,g->ij', p, p, weights)
     print("overlap")
     ovlp_off = ovlp - np.diag(np.diag(ovlp))
     for i in range(len(ovlp)):
         print("i = ", i, "max offdiag = ", np.max(np.abs(ovlp_off[i])), "diag = ", ovlp[i, i])
 
-    dp = dpolynom(points, alpha, beta)
+    dp = polder(points, alpha, beta)
     print(dp.shape)
     # plot
     for pp in p.T[:6]:
