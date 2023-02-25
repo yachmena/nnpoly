@@ -1,15 +1,12 @@
 import numpy as np
-from numpy.polynomial.hermite import hermval, hermder, hermgauss
 from jax.config import config; config.update("jax_enable_x64", True)
 import jax
 from jax import numpy as jnp
 from flax import linen as nn
 from typing import List, Callable
-from genpoly import fejer_quadrature, lanczos, batch_polynom, dpolynom, modified_chebyshev, legendre_monic
-from functools import partial
+from genpoly import fejer_quadrature, lanczos, batch_polval, polder
 import optax
 import itertools
-import sys
 
 
 class Dense(nn.Module):
@@ -22,7 +19,7 @@ class Dense(nn.Module):
         for i, size in enumerate(self.sizes):
             kernel = self.param(f"w_{i}", jax.nn.initializers.glorot_uniform(), (size_, size))
             bias = self.param(f"b_{i}", jax.nn.initializers.zeros, (size,))
-            x = jax.nn.relu(jnp.dot(x, kernel) + bias)
+            x = jax.nn.gelu(jnp.dot(x, kernel) + bias)
             size_ = size
         return jnp.exp(-x)
 
@@ -58,8 +55,8 @@ def potential(xyz):
     return -1.0 / jnp.linalg.norm(xyz, axis=-1)
 
 
-def solve_lanczos(poten: Callable, nbas: int, quanta, left: float, right: float, nquad=100):
-
+def solve_lanczos(poten: Callable, nbas: int, quanta, left: float, right: float,
+                  nquad: int = 100, nstates: int = 1):
 
     @jax.jit
     def hamiltonian(params):
@@ -72,12 +69,12 @@ def solve_lanczos(poten: Callable, nbas: int, quanta, left: float, right: float,
         alpha_y, beta_y = lanczos(nbas, y, w_y[:, 0])
         alpha_z, beta_z = lanczos(nbas, z, w_z[:, 0])
 
-        pol_x = batch_polynom(xyz[:, 0], alpha_x, beta_x)
-        pol_y = batch_polynom(xyz[:, 1], alpha_y, beta_y)
-        pol_z = batch_polynom(xyz[:, 2], alpha_z, beta_z)
-        dpol_x = dpolynom(xyz[:, 0], alpha_x, beta_x)
-        dpol_y = dpolynom(xyz[:, 1], alpha_y, beta_y)
-        dpol_z = dpolynom(xyz[:, 2], alpha_z, beta_z)
+        pol_x = batch_polval(xyz[:, 0], alpha_x, beta_x)
+        pol_y = batch_polval(xyz[:, 1], alpha_y, beta_y)
+        pol_z = batch_polval(xyz[:, 2], alpha_z, beta_z)
+        dpol_x = polder(xyz[:, 0], alpha_x, beta_x)
+        dpol_y = polder(xyz[:, 1], alpha_y, beta_y)
+        dpol_z = polder(xyz[:, 2], alpha_z, beta_z)
 
         w_x, w_y, w_z = model.apply(params, xyz)
         w_x *= wx_[:, None]
@@ -125,11 +122,11 @@ def solve_lanczos(poten: Callable, nbas: int, quanta, left: float, right: float,
         return jnp.sum(trace(params)) 
 
     @jax.jit
-    def loss_eigen(params):
+    def loss_enr(params):
         def enr(params):
             h = hamiltonian(params)
             e, _ = jnp.linalg.eigh(h)
-            return e[:5]
+            return e[:nstates]
         return jnp.sum(enr(params)) 
 
     x, wx = fejer_quadrature(nquad, left, right)
@@ -139,18 +136,18 @@ def solve_lanczos(poten: Callable, nbas: int, quanta, left: float, right: float,
     weights = np.array([elem for elem in itertools.product(wx, wy, wz)])
     wx_, wy_, wz_ = weights.T
 
-    sizes = [512, 512, 1]
+    sizes = [32, 32, 32, 32, 1]
     model = Dense3D(sizes_x=sizes, sizes_y=sizes, sizes_z=sizes)
     params = model.init(jax.random.PRNGKey(0), xyz)
 
     h = hamiltonian(params)
     print(h.shape)
     e, _ = jnp.linalg.eigh(h)
-    print(e[:5])
+    print(e[:nstates])
 
     optx = optax.adam(learning_rate=0.001)
     opt_state = optx.init(params)
-    loss_grad_fn = jax.value_and_grad(loss_trace)
+    loss_grad_fn = jax.value_and_grad(loss_enr)
     
     for i in range(10000):
         loss_val, grad = loss_grad_fn(params)
@@ -159,11 +156,10 @@ def solve_lanczos(poten: Callable, nbas: int, quanta, left: float, right: float,
     
         h = hamiltonian(jax.lax.stop_gradient(params))
         e, _ = np.linalg.eigh(h)
-        print(i, loss_val, e[:5])
+        print(i, loss_val, e[:nstates])
 
 
 if __name__ == "__main__":
-    import matplotlib.pyplot as plt
 
     poten = potential
     nbas = 3
@@ -171,5 +167,5 @@ if __name__ == "__main__":
     right = 8.0
 
     quanta = np.array([elem for elem in itertools.product(*[np.arange(nbas)]*3) if sum(elem) <= nbas])
-    solve_lanczos(poten, nbas, quanta, left, right, nquad=60)
+    solve_lanczos(poten, nbas, quanta, left, right, nquad=60, nstates=5)
 
